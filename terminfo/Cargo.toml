@@ -1,0 +1,17 @@
+[package]
+name = "terminfo"
+version = "0.1.0"
+license = "MIT"
+description = "A terminfo library for rust "
+authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
+homepage = "https://github.com/IanS5/terminfo"
+repository = "https://github.com/IanS5/terminfo"
+
+[dependencies]
+failure = '0.1.1'
+failure_derive = '0.1.1'
+futures-preview = "0.2.2"
+
+[[example]]
+name = "simple"
+path = "./examples/simple.rs"
