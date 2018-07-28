@@ -10,7 +10,6 @@ repository = "https://github.com/IanS5/tty-rs"
 [dependencies]
 failure = '0.1.1'
 failure_derive = '0.1.1'
-futures-preview = "0.2.2"
 
 [[example]]
 name = "simple"

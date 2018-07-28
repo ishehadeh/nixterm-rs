@@ -1,6 +1,5 @@
 use errors::*;
 use failure::ResultExt;
-use futures;
 use lang::printf::PrintfArgs;
 use lang::Argument;
 use std::collections::VecDeque;

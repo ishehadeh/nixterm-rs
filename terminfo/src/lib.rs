@@ -5,7 +5,6 @@
 
 #[macro_use]
 extern crate failure;
-extern crate futures;
 extern crate test;
 
 mod errors;
