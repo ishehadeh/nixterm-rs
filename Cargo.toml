@@ -1,7 +1,12 @@
 [package]
 name = "tty"
 version = "0.1.0"
+license = "MIT"
+description = "A terminal library for rust "
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
+homepage = "https://github.com/IanS5/tty-rs"
+repository = "https://github.com/IanS5/tty-rs"
+
 
 [dependencies]
 nix = "0.11.0"

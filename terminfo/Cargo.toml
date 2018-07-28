@@ -4,8 +4,8 @@ version = "0.1.0"
 license = "MIT"
 description = "A terminfo library for rust "
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
-homepage = "https://github.com/IanS5/terminfo"
-repository = "https://github.com/IanS5/terminfo"
+homepage = "https://github.com/IanS5/tty-rs"
+repository = "https://github.com/IanS5/tty-rs"
 
 [dependencies]
 failure = '0.1.1'
