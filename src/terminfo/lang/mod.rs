@@ -8,8 +8,8 @@ pub use self::executor::Executor;
 
 #[cfg(test)]
 mod tests {
-    use lang::printf::*;
-    use lang::*;
+    use terminfo::lang::printf::*;
+    use terminfo::lang::*;
 
     #[test]
     fn printf() {

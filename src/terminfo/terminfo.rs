@@ -1,8 +1,8 @@
-use errors::*;
-use fields::*;
 use std::mem;
-use util;
-use util::read_le_u16;
+use terminfo::errors::*;
+use terminfo::fields::*;
+use terminfo::util;
+use terminfo::util::read_le_u16;
 
 /// TermInfo is immutable terminfo data.
 ///
@@ -217,7 +217,7 @@ impl<'a> TermInfo<'a> {
     /// use std::io;
     /// use std::io::prelude::*;
     /// use std::fs::File;
-    /// use terminfo::TermInfo;
+    /// use tty::terminfo;
     ///
     /// fn main() {
     ///     let mut data = Vec::new();
@@ -225,7 +225,7 @@ impl<'a> TermInfo<'a> {
     ///     File::open("/usr/share/terminfo/x/xterm")
     ///         .unwrap()
     ///         .read_to_end(&mut data);
-    ///     let info = TermInfo::parse(&data).unwrap();
+    ///     let info = terminfo::TermInfo::parse(&data).unwrap();
     ///
     ///     assert_eq!(info.boolean(terminfo::AutoLeftMargin), false);
     /// }
@@ -386,9 +386,9 @@ impl<'a> TermInfo<'a> {
 
 #[cfg(test)]
 mod test {
-    const RXVT_INFO: &'static [u8] = include_bytes!("../test-data/rxvt");
-    const XTERM_INFO: &'static [u8] = include_bytes!("../test-data/xterm");
-    const LINUX_16COLOR_INFO: &'static [u8] = include_bytes!("../test-data/linux-16color");
+    const RXVT_INFO: &'static [u8] = include_bytes!("../../test-data/rxvt");
+    const XTERM_INFO: &'static [u8] = include_bytes!("../../test-data/xterm");
+    const LINUX_16COLOR_INFO: &'static [u8] = include_bytes!("../../test-data/linux-16color");
 
     use terminfo::*;
 

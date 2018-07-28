@@ -1,19 +1,19 @@
-pub extern crate terminfo;
 #[macro_use]
 extern crate failure;
 extern crate nix;
 
 #[macro_use]
 pub mod ansi;
-mod error;
+mod errors;
 pub mod format;
 pub mod rawterm;
 pub mod term;
 pub mod xterm;
-pub use self::error::*;
+pub use self::errors::*;
 pub use format::format;
 use nix::sys::termios;
 pub use term::Term;
+pub mod terminfo;
 
 #[macro_export]
 macro_rules! tformat {

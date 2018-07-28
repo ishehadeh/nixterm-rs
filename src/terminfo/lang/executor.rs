@@ -1,8 +1,8 @@
-use errors::*;
-use lang::parser::{Op, Parser};
-use lang::Argument;
 use std::collections::VecDeque;
 use std::io;
+use terminfo::errors::*;
+use terminfo::lang::parser::{Op, Parser};
+use terminfo::lang::Argument;
 
 pub struct Executor<'a> {
     src: &'a [u8],

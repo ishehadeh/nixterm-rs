@@ -1,4 +1,4 @@
-use error::*;
+use errors::*;
 use failure::ResultExt;
 use nix::sys::termios;
 use std::cell::RefMut;

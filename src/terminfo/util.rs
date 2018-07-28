@@ -1,10 +1,10 @@
-use errors::*;
 use failure::Fail;
 use std::mem::size_of;
 use std::mem::transmute;
 use std::ptr;
 use std::slice;
 use std::str;
+use terminfo::errors::*;
 
 const WORD_SIZE: usize = size_of::<usize>();
 
@@ -201,7 +201,7 @@ impl<'a> StrTable<'a> {
 
 #[cfg(test)]
 mod test {
-    use util;
+    use terminfo::util;
 
     #[test]
     fn has_null_bytes() {

@@ -1,4 +1,6 @@
-extern crate terminfo;
+extern crate tty;
+
+use tty::terminfo;
 
 fn main() {
     let info = terminfo::from_env().unwrap();

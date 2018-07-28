@@ -1,10 +1,9 @@
 use ansi;
+use errors::*;
 use failure::ResultExt;
 use std::io;
 use std::str;
 use std::str::FromStr;
-use ErrorKind;
-use Result;
 
 pub fn write_fmt<W: io::Write>(w: &mut W, s: &[u8]) -> Result<()> {
     let mut bold = false;

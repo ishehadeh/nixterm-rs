@@ -1,4 +1,5 @@
 use ansi;
+use errors::*;
 use failure::ResultExt;
 use format;
 use nix::libc;
@@ -13,8 +14,6 @@ use std::mem;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::{thread, time};
 use terminfo;
-use ErrorKind;
-use Result;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Cursor(usize, usize);

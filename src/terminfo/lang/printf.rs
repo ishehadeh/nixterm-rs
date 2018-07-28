@@ -1,7 +1,7 @@
-use errors::*;
 use failure::ResultExt;
-use lang::Argument;
 use std::io;
+use terminfo::errors::*;
+use terminfo::lang::Argument;
 
 const NULL: &'static [u8] = &[b'(', b'n', b'u', b'l', b'l', b')'];
 const NUM_CHARS: [u8; 16] = [

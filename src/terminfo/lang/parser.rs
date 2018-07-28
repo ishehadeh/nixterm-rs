@@ -1,10 +1,10 @@
-use errors::*;
 use failure::ResultExt;
-use lang::printf::PrintfArgs;
-use lang::Argument;
 use std::collections::VecDeque;
 use std::result;
 use std::sync::mpsc;
+use terminfo::errors::*;
+use terminfo::lang::printf::PrintfArgs;
+use terminfo::lang::Argument;
 
 pub struct Parser<'a> {
     src: &'a [u8],

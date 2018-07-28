@@ -2,10 +2,9 @@
 ///!
 ///! This module can also be used xterm-based terminal (rxvt, xterm-256, kitty, etc)
 use ansi;
+use errors::*;
 use failure::ResultExt;
 use std::fmt::Write;
-use ErrorKind;
-use Result;
 
 #[derive(Debug, Clone)]
 pub enum XColor {

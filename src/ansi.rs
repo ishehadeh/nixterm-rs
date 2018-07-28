@@ -1,9 +1,7 @@
+use errors::*;
 use failure::ResultExt;
 use std::io::Write;
 use std::str::{Chars, FromStr};
-use Error;
-use ErrorKind;
-use Result;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Color {

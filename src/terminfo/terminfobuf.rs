@@ -1,8 +1,8 @@
-use errors::*;
-use fields::*;
-use lang;
+use terminfo::errors::*;
+use terminfo::fields::*;
+use terminfo::lang;
+use terminfo::util;
 use terminfo::TermInfo;
-use util;
 
 /// The owning, mutable version of `TermInfo`
 #[derive(Debug, Clone)]
@@ -359,13 +359,11 @@ impl<'a> From<&'a TermInfo<'a>> for TermInfoBuf {
 
 #[cfg(test)]
 mod test {
-    const RXVT_INFO: &'static [u8] = include_bytes!("../test-data/rxvt");
-    const XTERM_INFO: &'static [u8] = include_bytes!("../test-data/xterm");
-    const LINUX_16COLOR_INFO: &'static [u8] = include_bytes!("../test-data/linux-16color");
-
-    use fields::*;
     use terminfo::*;
-    use terminfobuf::*;
+
+    const RXVT_INFO: &'static [u8] = include_bytes!("../../test-data/rxvt");
+    const XTERM_INFO: &'static [u8] = include_bytes!("../../test-data/xterm");
+    const LINUX_16COLOR_INFO: &'static [u8] = include_bytes!("../../test-data/linux-16color");
 
     #[test]
     fn from_terminfo() {
