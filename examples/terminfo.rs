@@ -1,6 +1,6 @@
-extern crate tty;
+extern crate nixterm;
 
-use tty::terminfo;
+use nixterm::terminfo;
 
 fn main() {
     let info = terminfo::from_env().unwrap();

@@ -217,7 +217,7 @@ impl<'a> TermInfo<'a> {
     /// use std::io;
     /// use std::io::prelude::*;
     /// use std::fs::File;
-    /// use tty::terminfo;
+    /// use nixterm::terminfo;
     ///
     /// fn main() {
     ///     let mut data = Vec::new();
