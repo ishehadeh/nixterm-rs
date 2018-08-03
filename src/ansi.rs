@@ -10,27 +10,23 @@ pub enum Color {
     Rgb(u8, u8, u8),
 }
 
-#[repr(u8)]
-pub enum ControlSequence {
-    CursorUp = 65,
-    CursorDown = 66,
-    CursorRight = 67,
-    CursorLeft = 69,
-    CursorNextLine = 70,
-    CursorPrevLine = 71,
-    CursorToColumn = 72,
-    CursorMoveTo = 73,
-    EraseDisplay = 74,
-    EraseLine = 75,
-    ScollUp = 76,
-    ScrollDown = 77,
-    CursorMoveToAlt = 102,
-    AddGraphicRendition = 109,
-    AuxControl = 105,
-    ReportCursor = 110,
-    CursorSaveState = 115,
-    CursorRestoreState = 117,
-}
+pub const ALL_OFF: &[u8] = b"\x1b[0m";
+
+pub const IMPACT_BOLD: &[u8] = b"\x1b[1m";
+pub const IMPACT_FAINT: &[u8] = b"\x1b[2m";
+pub const IMPACT_OFF: &[u8] = b"\x1b[22m";
+
+pub const BLINK: &[u8] = b"\x1b[5m";
+pub const BLINK_OFF: &[u8] = b"\x1b[25m";
+
+pub const ITALICS: &[u8] = b"\x1b[3m";
+pub const ITALICS_OFF: &[u8] = b"\x1b[23m";
+
+pub const UNDERLINE: &[u8] = b"\x1b[4m";
+pub const UNDERLINE_OFF: &[u8] = b"\x1b[24m";
+
+pub const RESET_BACKGROUND: &[u8] = b"\x1b[49m";
+pub const RESET_FOREGROUND: &[u8] = b"\x1b[39m";
 
 #[repr(u8)]
 pub enum GraphicRendition {
@@ -72,6 +68,12 @@ impl From<u8> for Color {
 impl From<(u8, u8, u8)> for Color {
     fn from(v: (u8, u8, u8)) -> Color {
         Color::Rgb(v.0, v.1, v.2)
+    }
+}
+
+impl From<&'static str> for Color {
+    fn from(v: &'static str) -> Color {
+        Color::from_str(v).unwrap()
     }
 }
 
@@ -169,7 +171,8 @@ impl FromStr for Color {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Color> {
-        let lower: String = s.to_lowercase()
+        let lower: String = s
+            .to_lowercase()
             .chars()
             .skip_while(|&c| c == ' ' || c == '\t' || c == '\r' || c == '\n')
             .collect();
@@ -178,17 +181,19 @@ impl FromStr for Color {
         let c0 = lower.chars().nth(0).unwrap();
         match c0 {
             '#' => Ok(Color::from_hex(lower.chars()).context(ErrorKind::InvalidColor)?),
-            '0'...'9' => Ok(Color::Index(lower
-                .parse::<u8>()
-                .context(ErrorKind::InvalidColor)?)),
+            '0'...'9' => Ok(Color::Index(
+                lower.parse::<u8>().context(ErrorKind::InvalidColor)?,
+            )),
             'r' => {
-                if len > 4 && lower.chars().nth(1).unwrap() == 'g'
+                if len > 4
+                    && lower.chars().nth(1).unwrap() == 'g'
                     && lower.chars().nth(2).unwrap() == 'b'
                 {
                     let offset = lower[2..].chars().take_while(|&c| c != '(').count();
                     Ok(Color::from_rgb(lower[offset + 2..].chars())
                         .context(ErrorKind::InvalidColor)?)
-                } else if len > 2 && lower.chars().nth(1).unwrap() == 'e'
+                } else if len > 2
+                    && lower.chars().nth(1).unwrap() == 'e'
                     && lower.chars().nth(2).unwrap() == 'd'
                 {
                     Ok(Color::Index(1))
@@ -249,8 +254,7 @@ pub fn cursor_set_column<W: Write>(w: &mut W, x: usize) -> Result<()> {
 
 #[inline]
 pub fn sgr<W: Write>(w: &mut W, gr: GraphicRendition) -> Result<usize> {
-    Ok(
-        w.write(b"\x1b[").context(ErrorKind::CsiFailed)? + util::write_u8_ansi(w, gr as u8)?
-            + w.write(b"m").context(ErrorKind::CsiFailed)?,
-    )
+    Ok(w.write(b"\x1b[").context(ErrorKind::CsiFailed)?
+        + util::write_u8_ansi(w, gr as u8)?
+        + w.write(b"m").context(ErrorKind::CsiFailed)?)
 }

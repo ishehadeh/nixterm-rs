@@ -9,8 +9,7 @@ use std::io;
 use std::io::{BufRead, BufReader, Read};
 use std::ops::DerefMut;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use terminfo;
 use util;
 
@@ -85,6 +84,28 @@ where
     stdin: Mutex<BufReader<I>>,
     stdout: Mutex<O>,
     err: RefCell<Option<Error>>,
+}
+
+pub struct TermWriter<'a, O>
+where
+    O: io::Write + AsRawFd + 'a,
+{
+    info: &'a terminfo::TermInfoBuf,
+    err: Option<Error>,
+    written: usize,
+    stdout: MutexGuard<'a, O>,
+
+    bold: bool,
+    blink: bool,
+    underline: bool,
+    italics: bool,
+    standout: bool,
+    invert: bool,
+    invisible: bool,
+    dim: bool,
+
+    foreground: Option<ansi::Color>,
+    background: Option<ansi::Color>,
 }
 
 impl Settings {
@@ -209,11 +230,6 @@ impl Term<io::Stdin, io::Stdout> {
     }
 }
 
-enum Colored {
-    Background,
-    Foreground,
-}
-
 /// Map a `seta[b/f]` color to a `set[b/f]` color.
 #[inline]
 fn seta_to_set_pallet(x: u8) -> u8 {
@@ -312,323 +328,40 @@ fn index_from_rgb4(r: u8, g: u8, b: u8) -> u8 {
     }
 }
 
-/// Term represents the user's terminal.
-/// It has two channels, `I` (input), and `O` (output).
-/// Each terminal is accompanied by a "terminfo" file, (represented by the `TermInfoBuf` struct).
-impl<I, O> Term<I, O>
+impl<'a, O> TermWriter<'a, O>
 where
-    I: io::Read + AsRawFd,
-    O: io::Write + AsRawFd,
+    O: io::Write + AsRawFd + 'a,
 {
-    pub fn from_streams(tib: terminfo::TermInfoBuf, stdin: I, stdout: O) -> Term<I, O> {
-        Term {
-            info: tib,
-            stdin_fd: stdin.as_raw_fd(),
-            stdin: Mutex::new(BufReader::new(stdin)),
-            stdout: Mutex::new(stdout),
-            err: RefCell::new(None),
-        }
-    }
-
-    /// Write to the terminal's stdout, it returns the number of bytes written.
-    /// `write` does not need a mutable reference to `self`, meaning it can be used while self is being borrowed,
-    /// however `write` blocks if it's being called from another thread.
-    ///
-    /// # Examples
-    /// ```
-    /// use nixterm::term::Term;
-    ///
-    /// pub fn main() {
-    ///     let term = Term::new().unwrap();
-    ///     assert_eq!(term.write(b"Hello World!"), 12);
-    /// }
-    /// ```
-    pub fn write(&self, bytes: &[u8]) -> usize {
-        if self.err.borrow().is_none() {
-            self.stdout
-                .lock()
-                .unwrap()
-                .write(bytes)
-                .unwrap_or_else(|e| {
-                    self.err
-                        .replace(Some(e.context(ErrorKind::WriteFailed).into()));
-                    0
-                })
-        } else {
-            0
-        }
-    }
-
-    /// Read from the terminal's standard input. Read into a fixed length buffer and return the number of characters read.
-    /// Similar to `Term::write`, `read` does not need `Term` to be mutable, however only one thread may be reading at a time.
-    ///
-    /// # Examples
-    /// ```
-    /// use nixterm::term::Term;
-    ///
-    /// pub fn main() {
-    ///     let term = Term::new().unwrap();
-    ///     let mut buffer : [u8; 12] = [0; 12];
-    ///     
-    ///     // There's nothing to read! so read does nothing and returns 0.
-    ///     assert_eq!(term.read(&mut buffer), 0);
-    ///     assert_eq!(buffer, [0; 12]);
-    /// }
-    /// ```
-    pub fn read(&self, buffer: &mut [u8]) -> usize {
-        if self.err.borrow().is_none() {
-            self.stdin
-                .lock()
-                .unwrap()
-                .read(buffer)
-                .context(ErrorKind::ReadFailed)
-                .unwrap_or_else(|e| {
-                    self.set_err(e);
-                    0
-                })
-        } else {
-            0
-        }
-    }
-
-    pub(crate) fn set_err<T: Into<Error>>(&self, e: T) {
-        self.err.replace(Some(e.into()));
-    }
-
-    pub(crate) fn take_err(&self) -> Error {
-        self.err.replace(None).unwrap()
-    }
-
-    pub(crate) fn has_err(&self) -> bool {
-        self.err.borrow().is_some()
-    }
-
-    pub fn err(&self) -> Result<()> {
-        if self.has_err() {
-            Err(self.take_err())
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Execute a string field
-    fn exec<'a>(&'a self, field: terminfo::StringField) -> Result<terminfo::lang::Executor<'a>> {
+    fn exec<'b>(&'b self, field: terminfo::StringField) -> Result<terminfo::lang::Executor<'a>> {
         match self.info.exec(field) {
             Some(v) => Ok(v),
             None => Err(ErrorKind::MissingTermInfoField(field).into()),
         }
     }
 
-    /// Wrapper around exec, which immediately runs the string with no args and writes it to `O`.
-    fn write_info_str(&self, field: terminfo::StringField) -> usize {
+    fn write_info_str(mut self, field: terminfo::StringField, fallback: &[u8]) -> Self {
+        if self.err().is_some() {
+            return self;
+        }
+
         match self.exec(field) {
-            Ok(mut v) => v.write(self.stdout.lock().unwrap().deref_mut())
-                .context(ErrorKind::FailedToRunTerminfo(field))
-                .unwrap_or_else(|e| {
-                    self.set_err(e);
-                    0
-                }),
-            Err(e) => {
-                self.err.replace(Some(
-                    e.context(ErrorKind::FailedToRunTerminfo(field)).into(),
-                ));
-                0
+            Ok(mut v) => {
+                self.written += v
+                    .write(self.stdout.deref_mut())
+                    .context(ErrorKind::FailedToRunTerminfo(field))
+                    .unwrap_or_else(|e| {
+                        self.err = Some(e.into());
+                        0
+                    });
+                self
             }
+            Err(_) => self.write_bytes(fallback),
         }
-    }
-
-    pub fn settings(&self) -> Settings {
-        Settings {
-            termios: match termios::tcgetattr(self.as_raw_fd()) {
-                Ok(v) => v,
-                Err(e) => {
-                    // This should be caught on the next `update`;
-                    self.set_err(e.context(ErrorKind::FailedToSetTermios));
-                    unsafe { termios::Termios::default_uninit() }
-                }
-            },
-        }
-    }
-
-    pub fn update(&self, settings: Settings) -> Result<()> {
-        self.err()?;
-
-        termios::tcsetattr(
-            self.as_raw_fd(),
-            termios::SetArg::TCSAFLUSH,
-            &settings.termios,
-        ).context(ErrorKind::FailedToSetTermios)?;
-        Ok(())
-    }
-
-    pub fn print<T: AsRef<str>>(&self, s: T) -> Result<usize> {
-        self.err()?;
-
-        let mut stdout = self.stdout.lock().unwrap();
-        let mut written = 0;
-
-        let mut bold = false;
-        let mut italics = false;
-        let mut strike = false;
-        let mut blink = false;
-
-        let mut slice = s.as_ref();
-        while slice.len() > 0 {
-            let printable_count = slice
-                .chars()
-                .take_while(|&c| {
-                    c != '_' && c != '*' && c != '\\' && c != '%' && c != '[' && c != '~'
-                })
-                .count();
-
-            written += stdout
-                .write(slice[..printable_count].as_bytes())
-                .context(ErrorKind::FailedWriteToStdout)?;
-
-            let mut read = printable_count;
-
-            match slice.chars().nth(read) {
-                Some('_') => {
-                    bold = !bold;
-                    if bold {
-                        written += ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::Bold)?;
-                    } else {
-                        written +=
-                            ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::ResetImpact)?;
-                    }
-                    read += 1;
-                }
-                Some('*') => {
-                    italics = !italics;
-                    if italics {
-                        written += ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::Italic)?;
-                    } else {
-                        written +=
-                            ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::ResetStyle)?;
-                    }
-                    read += 1;
-                }
-                Some('~') => {
-                    strike = !strike;
-                    if strike {
-                        written += ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::Strike)?;
-                    } else {
-                        written +=
-                            ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::ResetStrike)?;
-                    }
-                    read += 1;
-                }
-                Some('%') => {
-                    blink = !blink;
-                    if blink {
-                        written += ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::Blink)?;
-                    } else {
-                        written +=
-                            ansi::sgr(stdout.deref_mut(), ansi::GraphicRendition::ResetBlink)?;
-                    }
-                    read += 1;
-                }
-                Some('\\') => {
-                    written += match slice.chars().nth(read + 1) {
-                        Some('\\') | Some('_') | Some('~') | Some('*') | Some('%') | Some('{') => {
-                            stdout.write(slice[read + 1..read + 2].as_bytes())
-                        }
-                        Some(_) => stdout.write(slice[read..read + 2].as_bytes()),
-                        None => stdout.write(slice[read..read + 2].as_bytes()),
-                    }.context(ErrorKind::FailedWriteToStdout)?;
-                    read += 2;
-                }
-                Some('[') => match slice.chars().nth(read + 1) {
-                    Some('+') => {
-                        let split_index =
-                            slice[read + 2..].chars().take_while(|&c| c != ':').count();
-                        let end_index = slice[split_index + read + 2..]
-                            .chars()
-                            .take_while(|&c| c != ']')
-                            .count() + split_index;
-                        let s = &slice[read + 2..read + 2 + end_index];
-                        let color = ansi::Color::from_str(&s[split_index + 1..])?;
-                        written += match s[..split_index].trim() {
-                            "fg" => {
-                                self.write_color(stdout.deref_mut(), color, Colored::Foreground)?
-                            }
-                            "bg" => {
-                                self.write_color(stdout.deref_mut(), color, Colored::Background)?
-                            }
-                            _ => return Err(ErrorKind::InvalidColorLocation.into()),
-                        };
-                        read += end_index + 3
-                    }
-                    Some('-') => {
-                        let end_index = slice[read + 2..].chars().take_while(|&c| c != ']').count();
-
-                        let s = &slice[read + 2..read + 2 + end_index];
-
-                        written += match s.trim() {
-                            "fg" => stdout
-                                .write(b"\x1b[39m")
-                                .context(ErrorKind::FailedWriteToStdout)?,
-                            "bg" => stdout
-                                .write(b"\x1b[49m")
-                                .context(ErrorKind::FailedWriteToStdout)?,
-                            "all" => self.exec(terminfo::ExitAttributeMode)?
-                                .write(stdout.deref_mut())
-                                .context(ErrorKind::FailedWriteToStdout)?,
-                            _ => return Err(ErrorKind::InvalidResetSpecifier.into()),
-                        };
-                        read += end_index + 3
-                    }
-                    Some(_) => {
-                        stdout
-                            .write(slice[read..read + 2].as_bytes())
-                            .context(ErrorKind::FailedWriteToStdout)?;
-                    }
-                    _ => {
-                        stdout.write(b"[").context(ErrorKind::FailedWriteToStdout)?;
-                    }
-                },
-                Some(_) => {
-                    written += stdout
-                        .write(slice[read..read + 1].as_bytes())
-                        .context(ErrorKind::FailedWriteToStdout)?;
-                    read += 1;
-                }
-                None => break,
-            }
-
-            slice = &slice[read..];
-        }
-
-        stdout.flush().context(ErrorKind::WriteFailed)?;
-        Ok(written)
-    }
-
-    pub fn flush(&self) {
-        match self.stdout.lock().unwrap().flush() {
-            Ok(_) => (),
-            Err(e) => self.set_err(e.context(ErrorKind::WriteFailed)),
-        }
-    }
-
-    pub fn read_keys<'a>(&'a self) -> Keys<'a, I, O> {
-        Keys::new(self)
-    }
-
-    pub fn clear_line_after_cursor(&self) {
-        self.write_info_str(terminfo::ClrEol);
-    }
-
-    pub fn save_cursor(&self) {
-        self.write_info_str(terminfo::SaveCursor);
-    }
-
-    pub fn restore_cursor(&self) {
-        self.write_info_str(terminfo::RestoreCursor);
     }
 
     /// Try to map the color into its closest equivalent supported by this terminal.
     fn scrunch_color(&self, color: ansi::Color) -> ansi::Color {
-        match self.colors() {
+        match self.info.number(terminfo::MaxColors).unwrap_or(2) {
             8..=15 => match color {
                 ansi::Color::Index(x @ 0..=7) => x,
                 ansi::Color::Index(x @ 8..=15) => (x - 8),
@@ -676,6 +409,140 @@ where
         }
     }
 
+    fn write_u8(mut self, x: u8) -> Self {
+        if self.err().is_some() {
+            return self;
+        }
+
+        match util::write_u8_ansi(self.stdout.deref_mut(), x) {
+            Ok(v) => self.written += v,
+            Err(e) => self.err = Some(e.context(ErrorKind::WriteFailed).into()),
+        };
+
+        self
+    }
+
+    fn wipe_formatting(&mut self) {
+        self.standout = false;
+        self.underline = false;
+        self.invert = false;
+        self.blink = false;
+        self.dim = false;
+        self.bold = false;
+        self.invisible = false;
+        self.background = None;
+        self.foreground = None;
+    }
+
+    fn set_sgr(&mut self) {
+        match self
+            .exec(terminfo::SetAttributes)
+            .unwrap()
+            .arg(self.standout)
+            .arg(self.underline)
+            .arg(self.invert)
+            .arg(self.blink)
+            .arg(self.dim)
+            .arg(self.bold)
+            .arg(self.invisible)
+            .write(self.stdout.deref_mut())
+        {
+            Ok(v) => self.written += v,
+            Err(e) => {
+                self.err = Some(
+                    e.context(ErrorKind::FailedToRunTerminfo(terminfo::SetAAttributes))
+                        .into(),
+                );
+            }
+        }
+    }
+
+    pub fn write_bytes(mut self, buf: &[u8]) -> Self {
+        if self.err().is_some() {
+            return self;
+        }
+
+        self.set_sgr();
+        if let Err(e) = self.write_fg_bg() {
+            self.err = Some(
+                e.context(ErrorKind::FailedToRunTerminfo(terminfo::SetAAttributes))
+                    .into(),
+            );
+            return self;
+        }
+
+        match self.stdout.write(buf) {
+            Ok(v) => self.written += v,
+            Err(e) => self.err = Some(e.context(ErrorKind::WriteFailed).into()),
+        };
+
+        self.wipe_formatting();
+        self
+    }
+
+    pub fn print<T: AsRef<str>>(self, s: T) -> Self {
+        self.write_bytes(s.as_ref().as_bytes())
+    }
+
+    pub fn println<T: AsRef<str>>(self, s: T) -> Self {
+        self.print(s).print("\n")
+    }
+
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    pub fn blink(mut self) -> Self {
+        self.blink = true;
+        self
+    }
+
+    pub fn italics(mut self) -> Self {
+        self.italics = true;
+        self
+    }
+
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+
+    pub fn invisible(mut self) -> Self {
+        self.invisible = true;
+        self
+    }
+
+    pub fn standout(mut self) -> Self {
+        self.standout = true;
+        self
+    }
+
+    pub fn dim(mut self) -> Self {
+        self.dim = true;
+        self
+    }
+
+    pub fn clear(self) -> Self {
+        self.write_info_str(terminfo::ExitAttributeMode, ansi::ALL_OFF)
+    }
+
+    pub fn done(mut self) -> Result<usize> {
+        self.stdout.flush().context(ErrorKind::WriteFailed)?;
+        match self.err {
+            Some(v) => Err(v),
+            None => Ok(self.written),
+        }
+    }
+
+    pub fn err(&self) -> &Option<Error> {
+        &self.err
+    }
+
+    pub fn written(&self) -> usize {
+        self.written
+    }
+
     /// Set the terminal's foreground color.
     ///
     /// `T` a `ansi::Color` enum, a number (`u8`) or a string.
@@ -710,108 +577,326 @@ where
     ///
     /// ## 4/3-bit Colors
     /// Basically all terminals will support 3-bits, many will support 4 (that 4th bit gives the option of a "bright" variant).
-    pub fn foreground<T: Into<ansi::Color>>(&self, color: T) -> Result<usize> {
+    pub fn foreground<T: Into<ansi::Color>>(mut self, color: T) -> Self {
+        if self.err().is_some() {
+            return self;
+        }
+
+        self.foreground = Some(self.scrunch_color(color.into()));
+        self
+    }
+
+    pub fn background<T: Into<ansi::Color>>(mut self, color: T) -> Self {
+        if self.err().is_some() {
+            return self;
+        }
+
+        self.background = Some(self.scrunch_color(color.into()));
+        self
+    }
+
+    fn write_fg_bg(&mut self) -> Result<()> {
+        if self.err().is_some() {
+            return Ok(());
+        }
+        let bg = self.background.clone();
+        let fg = self.foreground.clone();
+
         self.write_color(
-            self.stdout.lock().unwrap().deref_mut(),
-            color.into(),
-            Colored::Foreground,
+            bg,
+            b"48;2;5",
+            terminfo::SetABackground,
+            terminfo::SetBackground,
+        )?;
+        self.write_color(
+            fg,
+            b"38;2;5",
+            terminfo::SetAForeground,
+            terminfo::SetForeground,
         )
     }
 
-    pub fn background<T: Into<ansi::Color>>(&self, color: T) -> Result<usize> {
-        self.write_color(
-            self.stdout.lock().unwrap().deref_mut(),
-            color.into(),
-            Colored::Background,
-        )
+    fn write_color(
+        &mut self,
+        color: Option<ansi::Color>,
+        rgb_prefix: &[u8],
+        seta: terminfo::StringField,
+        set: terminfo::StringField,
+    ) -> Result<()> {
+        match color {
+            Some(ansi::Color::Index(x)) => {
+                self.written += match self.exec(seta) {
+                    Ok(e) => e
+                        .arg(x as usize)
+                        .write(self.stdout.deref_mut())
+                        .context(ErrorKind::FailedToRunTerminfo(set))
+                        .map_err(|e| e.into()),
+                    Err(_) => self.exec(set).map(|exe| {
+                        exe.arg(seta_to_set_pallet(x) as usize)
+                            .write(self.stdout.deref_mut())
+                            .unwrap_or_else(|e| {
+                                self.err =
+                                    Some(e.context(ErrorKind::FailedToRunTerminfo(set)).into());
+                                0
+                            })
+                    }),
+                }.context(ErrorKind::WriteFailed)?
+            }
+            Some(ansi::Color::Rgb(r, g, b)) => {
+                use std::io::Write;
+
+                self.written += self.write(rgb_prefix).context(ErrorKind::WriteFailed)?
+                    + util::write_u8_ansi(self, r).context(ErrorKind::WriteFailed)?
+                    + self.write(b";").context(ErrorKind::WriteFailed)?
+                    + util::write_u8_ansi(self, g).context(ErrorKind::WriteFailed)?
+                    + self.write(b";").context(ErrorKind::WriteFailed)?
+                    + util::write_u8_ansi(self, b).context(ErrorKind::WriteFailed)?
+                    + self.write(b"m").context(ErrorKind::WriteFailed)?;
+            }
+            None => (),
+        }
+
+        Ok(())
     }
 
-    fn write_color<W: io::Write>(
-        &self,
-        stdout: &mut W,
-        color: ansi::Color,
-        item: Colored,
-    ) -> Result<usize> {
-        let (seta, set, strprefix) = match item {
-            Colored::Background => (
-                terminfo::SetABackground,
-                terminfo::SetBackground,
-                b"\xb1[48;5;2",
-            ),
-            Colored::Foreground => (
-                terminfo::SetAForeground,
-                terminfo::SetForeground,
-                b"\xb1[38;5;2",
-            ),
-        };
+    pub fn default_background(mut self) -> Self {
+        self.write_bytes(ansi::RESET_BACKGROUND)
+    }
 
-        match self.scrunch_color(color.into()) {
-            ansi::Color::Index(x) => Ok(match self.exec(seta) {
-                Ok(e) => e.arg(x as usize).write(stdout),
-                Err(_) => self.exec(set)?
-                    .arg(seta_to_set_pallet(x) as usize)
-                    .write(stdout),
-            }.context(ErrorKind::FailedToRunTerminfo(set))?),
-            ansi::Color::Rgb(r, g, b) => Ok(
-                self.write(strprefix) + util::write_u8_ansi(stdout, r)? + self.write(b";")
-                    + util::write_u8_ansi(stdout, g)? + self.write(b";")
-                    + self.write(b";") + util::write_u8_ansi(stdout, b)?
-                    + self.write(b";") + self.write(b"m"),
-            ),
+    pub fn default_foreground(mut self) -> Self {
+        self.write_bytes(ansi::RESET_FOREGROUND)
+    }
+}
+
+impl<'a, O> io::Write for TermWriter<'a, O>
+where
+    O: io::Write + AsRawFd,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(_) = self.err() {
+            return Ok(0);
+        }
+
+        self.set_sgr();
+
+        self.stdout.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdout.flush()
+    }
+}
+
+/// Term represents the user's terminal.
+/// It has two channels, `I` (input), and `O` (output).
+/// Each terminal is accompanied by a "terminfo" file, (represented by the `TermInfoBuf` struct).
+impl<I, O> Term<I, O>
+where
+    I: io::Read + AsRawFd,
+    O: io::Write + AsRawFd,
+{
+    pub fn from_streams(tib: terminfo::TermInfoBuf, stdin: I, stdout: O) -> Term<I, O> {
+        Term {
+            info: tib,
+            stdin_fd: stdin.as_raw_fd(),
+            stdin: Mutex::new(BufReader::new(stdin)),
+            stdout: Mutex::new(stdout),
+            err: RefCell::new(None),
         }
     }
 
-    pub fn prompt<T: AsRef<str>>(&self, prompt: T) -> Result<String> {
-        self.print(prompt)?;
+    /// Write to the terminal's stdout, it returns the number of bytes written.
+    /// `write` does not need a mutable reference to `self`, meaning it can be used while self is being borrowed,
+    /// however `write` blocks if it's being called from another thread.
+    ///
+    /// # Examples
+    /// ```
+    /// use nixterm::term::Term;
+    ///
+    /// pub fn main() {
+    ///     let term = Term::new().unwrap();
+    ///     term.writer()
+    ///         .foreground("rgb(64, 64, 128)")
+    ///         .write(b" Look look look! I'm kinda blue now!\n")
+    ///         .flush()
+    ///         .err()
+    ///         .unwrap();
+    /// }
+    /// ```
+    pub fn writer<'a>(&'a self) -> TermWriter<'a, O> {
+        TermWriter {
+            info: &self.info,
+            stdout: self.stdout.lock().unwrap(),
+            written: 0,
+            err: None,
+
+            bold: false,
+            dim: false,
+            standout: false,
+            italics: false,
+            invert: false,
+            blink: false,
+            invisible: false,
+            underline: false,
+
+            foreground: None,
+            background: None,
+        }
+    }
+
+    pub fn print<T: AsRef<str>>(&self, s: T) -> Result<usize> {
+        self.writer().print(s).done()
+    }
+
+    pub fn println<T: AsRef<str>>(&self, s: T) -> Result<usize> {
+        self.writer().println(s).done()
+    }
+
+    /// Read from the terminal's standard input. Read into a fixed length buffer and return the number of characters read.
+    /// Similar to `Term::write`, `read` does not need `Term` to be mutable, however only one thread may be reading at a time.
+    ///
+    /// # Examples
+    /// ```
+    /// use nixterm::term::Term;
+    ///
+    /// pub fn main() {
+    ///     let term = Term::new().unwrap();
+    ///     let mut buffer : [u8; 12] = [0; 12];
+    ///     
+    ///     // There's nothing to read! so read does nothing and returns 0.
+    ///     assert_eq!(term.read(&mut buffer), 0);
+    ///     assert_eq!(buffer, [0; 12]);
+    /// }
+    /// ```
+    pub fn read(&self, buffer: &mut [u8]) -> usize {
+        if self.err.borrow().is_none() {
+            self.stdin
+                .lock()
+                .unwrap()
+                .read(buffer)
+                .context(ErrorKind::ReadFailed)
+                .unwrap_or_else(|e| {
+                    self.set_err(e);
+                    0
+                })
+        } else {
+            0
+        }
+    }
+
+    pub fn readline(&self) -> Result<String> {
         let mut buf = String::new();
         self.stdin
             .lock()
             .unwrap()
             .read_line(&mut buf)
-            .context(ErrorKind::ReadLineFailed)?;
+            .context(ErrorKind::ReadFailed)?;
         Ok(buf)
+    }
+
+    pub(crate) fn set_err<T: Into<Error>>(&self, e: T) {
+        self.err.replace(Some(e.into()));
+    }
+
+    pub(crate) fn take_err(&self) -> Error {
+        self.err.replace(None).unwrap()
+    }
+
+    pub(crate) fn has_err(&self) -> bool {
+        self.err.borrow().is_some()
+    }
+
+    pub fn err(&self) -> Result<()> {
+        if self.has_err() {
+            Err(self.take_err())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Execute a string field
+    fn exec<'a>(&'a self, field: terminfo::StringField) -> Result<terminfo::lang::Executor<'a>> {
+        match self.info.exec(field) {
+            Some(v) => Ok(v),
+            None => Err(ErrorKind::MissingTermInfoField(field).into()),
+        }
+    }
+
+    /// Wrapper around exec, which immediately runs the string with no args and writes it to `O`.
+    fn write_info_str(&self, field: terminfo::StringField) -> usize {
+        match self.exec(field) {
+            Ok(mut v) => v
+                .write(self.stdout.lock().unwrap().deref_mut())
+                .context(ErrorKind::FailedToRunTerminfo(field))
+                .unwrap_or_else(|e| {
+                    self.set_err(e);
+                    0
+                }),
+            Err(e) => {
+                self.err.replace(Some(
+                    e.context(ErrorKind::FailedToRunTerminfo(field)).into(),
+                ));
+                0
+            }
+        }
+    }
+
+    pub fn settings(&self) -> Settings {
+        Settings {
+            termios: match termios::tcgetattr(self.as_raw_fd()) {
+                Ok(v) => v,
+                Err(e) => {
+                    // This should be caught on the next `update`;
+                    self.set_err(e.context(ErrorKind::FailedToSetTermios));
+                    unsafe { termios::Termios::default_uninit() }
+                }
+            },
+        }
+    }
+
+    pub fn update(&self, settings: Settings) -> Result<()> {
+        self.err()?;
+
+        termios::tcsetattr(
+            self.as_raw_fd(),
+            termios::SetArg::TCSAFLUSH,
+            &settings.termios,
+        ).context(ErrorKind::FailedToSetTermios)?;
+        Ok(())
+    }
+
+    pub fn flush(&self) {
+        match self.stdout.lock().unwrap().flush() {
+            Ok(_) => (),
+            Err(e) => self.set_err(e.context(ErrorKind::WriteFailed)),
+        }
+    }
+
+    pub fn read_keys<'a>(&'a self) -> Keys<'a, I, O> {
+        Keys::new(self)
+    }
+
+    pub fn clear_line_after_cursor(&self) {
+        self.write_info_str(terminfo::ClrEol);
+    }
+
+    pub fn save_cursor(&self) {
+        self.write_info_str(terminfo::SaveCursor);
+    }
+
+    pub fn restore_cursor(&self) {
+        self.write_info_str(terminfo::RestoreCursor);
+    }
+
+    pub fn prompt<T: AsRef<str>>(&self, prompt: T) -> Result<String> {
+        self.writer().print(prompt).done()?;
+        self.readline()
     }
 
     #[inline]
     pub fn colors(&self) -> usize {
         // There has to be at least two colors... right???
         self.info.number(terminfo::MaxColors).unwrap_or(2) as usize
-    }
-
-    pub fn bold(&self) -> usize {
-        self.write_info_str(terminfo::EnterBoldMode)
-    }
-
-    pub fn blink(&self) -> usize {
-        self.write_info_str(terminfo::EnterBlinkMode)
-    }
-
-    pub fn italics(&self) -> usize {
-        self.write_info_str(terminfo::EnterItalicsMode)
-    }
-
-    pub fn underline(&self) -> usize {
-        self.write_info_str(terminfo::EnterUnderlineMode)
-    }
-
-    pub fn hide(&self) -> usize {
-        self.write_info_str(terminfo::EnterSecureMode)
-    }
-
-    pub fn protect(&self) -> usize {
-        self.write_info_str(terminfo::EnterProtectedMode)
-    }
-
-    pub fn clear(&self) -> usize {
-        self.write_info_str(terminfo::ExitAttributeMode)
-    }
-
-    pub fn default_background(&self) -> usize {
-        self.write(b"\x1b[49m")
-    }
-
-    pub fn default_foreground(&self) -> usize {
-        self.write(b"\x1b[39m")
     }
 }
 
@@ -902,15 +987,15 @@ mod test {
                 &mut stdin,
                 &mut stdout,
             );
-            term.bold();
-            term.write(b"Hello World?");
-            term.clear();
+            term.writer().bold().print("Hello World?").done().unwrap();
         }
-        assert_eq!(&stdout.buffer, b"\x1b[1mHello World?\x1b[m\x0F");
+        assert_eq!(&stdout.buffer, b"\x1b[0;1mHello World?\x1b[m\x0F");
     }
 
     #[test]
     fn print() {
+        use std::str::FromStr;
+
         let mut stdin = FakeStdin::new();
         let mut stdout = FakeStdout::new();
         {
@@ -919,11 +1004,18 @@ mod test {
                 &mut stdin,
                 &mut stdout,
             );
-            term.print("_Hello_ [+fg:red]World[-fg]?").unwrap();
+            term.writer()
+                .bold()
+                .print("Hello")
+                .foreground(ansi::Color::from_str("red").unwrap())
+                .print("World")
+                .print("?")
+                .done()
+                .unwrap();
         }
         assert_eq!(
             String::from_utf8(stdout.buffer.clone()).unwrap(),
-            "\x1b[1mHello\x1b[22m \x1b[31mWorld\x1b[39m?"
+            "\x1b[0;1mHello\x1b[0m \x1b[31mWorld\x1b[0m?"
         );
         stdout.buffer.clear();
 
@@ -933,7 +1025,15 @@ mod test {
                 &mut stdin,
                 &mut stdout,
             );
-            term.print("_[+fg:red]Hi[-fg]_?").unwrap();
+            term.writer()
+                .bold()
+                .print("Hello")
+                .foreground(ansi::Color::from_str("red").unwrap())
+                .bold()
+                .print("World")
+                .print("?")
+                .done()
+                .unwrap();
         }
         assert_eq!(
             String::from_utf8(stdout.buffer).unwrap(),

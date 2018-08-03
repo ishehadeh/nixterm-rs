@@ -1,7 +1,7 @@
 extern crate nixterm;
 
 use nixterm::events::Key;
-use nixterm::term::Term;
+use nixterm::Term;
 
 pub fn main() {
     let term = Term::new().unwrap();
@@ -18,20 +18,21 @@ pub fn main() {
     term.print("Try pressing a few keys keys (Ctrl-C to quit): ")
         .unwrap();
 
-    for key in term.read_keys()
+    for key in term
+        .read_keys()
         .map(Result::unwrap)
         .take_while(|k| k != &Key::Control('C'))
     {
         term.save_cursor();
         term.clear_line_after_cursor();
-        term.write(format!("{:?}", key).as_bytes());
+        term.print(format!("{:?}", key)).unwrap();
         term.flush();
         term.restore_cursor();
     }
 
     // In raw mode '\n' will do nothing but move the cursor down a line,
     // so the '\r' is necessary to move the cursor back to the start.
-    term.write(b"\n\r");
+    term.print("\n\r").unwrap();
 
     // Revert back to the settings saved before entering raw mode
     term.update(settings).unwrap();

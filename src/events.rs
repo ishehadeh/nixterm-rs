@@ -152,7 +152,7 @@ where
         };
         keys.make_keymap();
         if let Some(v) = keys.tty.info.string(terminfo::KeypadXmit) {
-            keys.tty.write(v.as_bytes());
+            keys.tty.writer().write_bytes(v.as_bytes());
             keys.tty.flush();
         }
         keys
@@ -261,7 +261,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(v) = self.tty.info.string(terminfo::KeypadLocal) {
-            self.tty.write(v.as_bytes());
+            self.tty.writer().write_bytes(v.as_bytes());
             self.tty.flush();
         }
     }

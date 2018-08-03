@@ -8,30 +8,64 @@ pub fn main() {
     // save the terminal's settings
     let settings = term.settings();
 
-    term.print("_Demo Signup Form_\n\n").unwrap();
+    term.writer()
+        .bold()
+        .println("Demo Signup Form")
+        .println("")
+        .done()
+        .unwrap();
 
-    let name = term.prompt("[+fg:green] -->[-fg] Username: ").unwrap();
+    term.writer()
+        .foreground("green")
+        .print("\t--> ")
+        .print("Username: ")
+        .done()
+        .unwrap();
+
+    let name = term.readline().unwrap();
 
     // Turn echo off to hide the password
     term.update(settings.clone().echo(false)).unwrap();
 
-    let password = term.prompt("[+fg:green] -->[-fg] Password: ").unwrap();
-
-    term.print("\n").unwrap();
-
-    let password2 = term.prompt("[+fg:green] -->[-fg] Password (Confirm): ")
+    term.writer()
+        .foreground("green")
+        .print("\t--> ")
+        .print("Password: ")
+        .done()
         .unwrap();
+    let password = term.readline().unwrap();
+
+    term.println("");
+
+    term.writer()
+        .foreground("green")
+        .print("\t--> ")
+        .print("Password (Confirm): ")
+        .done()
+        .unwrap();
+    let password2 = term.readline().unwrap();
 
     // restore the original settings
     term.update(settings).unwrap();
 
+    term.println("");
+    term.println("");
+
     if password != password2 {
-        term.print("\n_[+fg:red]Passwords don't match![-fg]_\n")
+        term.writer()
+            .foreground("red")
+            .bold()
+            .println("Passwords don't match!")
+            .done()
             .unwrap();
     } else {
-        term.print(format!(
-            "\n\n_[+fg:cyan]Thank you, {}![-fg]_\n",
-            name.trim()
-        )).unwrap();
+        term.writer()
+            .foreground("cyan")
+            .print("Thank you, ")
+            .foreground("cyan")
+            .bold()
+            .println(name.trim())
+            .done()
+            .unwrap();
     }
 }
