@@ -2,7 +2,7 @@
 use errors::*;
 use failure::ResultExt;
 use std::io;
-use std::mem::size_of;
+use std::mem::{size_of, transmute};
 use std::slice::from_raw_parts;
 
 const WORD_SIZE: usize = size_of::<usize>();
@@ -68,28 +68,23 @@ fn find_zero(s: &[u8]) -> usize {
 /// Return the number of bytes before the first instance of a null byte in `s`, or s.len() if no null byte was found/
 #[inline]
 pub fn strlen(s: &[u8]) -> usize {
-    let offset = s.len() % WORD_SIZE;
+    if unsafe { transmute::<*const u8, usize>(s as *const [u8] as *const u8) } % WORD_SIZE == 0 {
+        let word_slice = unsafe {
+            from_raw_parts(
+                (s as *const [u8] as *const u8) as *const usize,
+                s.len() / WORD_SIZE,
+            )
+        };
 
-    for (i, c) in s.iter().take(offset).enumerate() {
-        if *c == 0 {
-            return i;
+        for (i, c) in word_slice.iter().enumerate() {
+            if has_null_byte(*c) {
+                return i * WORD_SIZE + find_zero(&s[i * WORD_SIZE..]);
+            }
         }
+        s.len()
+    } else {
+        find_zero(s)
     }
-
-    let word_slice = unsafe {
-        from_raw_parts(
-            (s as *const [u8] as *const u8).offset(offset as isize) as *const usize,
-            (s.len() - offset) / WORD_SIZE,
-        )
-    };
-
-    for (i, c) in word_slice.iter().enumerate() {
-        if has_null_byte(*c) {
-            let b = offset + i * WORD_SIZE;
-            return b + find_zero(&s[b..]);
-        }
-    }
-    find_zero(s)
 }
 
 /// Write a u8 in a ansi-escape code compatible format
