@@ -1,5 +1,4 @@
 use failure;
-use std::os::unix::io::RawFd;
 use std::{fmt, result};
 use terminfo;
 
@@ -9,7 +8,7 @@ pub struct Error {
     inner: failure::Context<ErrorKind>,
 }
 
-#[derive(Eq, PartialEq, Debug, Fail)]
+#[derive(Eq, PartialEq, Debug, Clone, Fail)]
 pub enum ErrorKind {
     #[fail(display = "failed to put the terminal in raw mode")]
     InitRawModeFailed,
@@ -72,6 +71,21 @@ pub enum ErrorKind {
 
     #[fail(display = "Failed to execute a terminfo string")]
     FailedToRunTerminfo(terminfo::StringField),
+
+    #[fail(display = "Failed to get a handle to the user's terminal")]
+    FailedToCreateTermInstance,
+
+    #[fail(display = "Terminal failed to read from the input stream")]
+    ReadFailed,
+
+    #[fail(display = "Terminal failed to write to the output stream")]
+    WriteFailed,
+
+    #[fail(display = "Failed to update termios")]
+    FailedToSetTermios,
+
+    #[fail(display = "Failed to get termios")]
+    FailedToGetTermios,
 }
 
 impl Error {

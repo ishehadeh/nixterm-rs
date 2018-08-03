@@ -92,11 +92,9 @@ impl From<String> for XColor {
 ///! [details](https://sw.kovidgoyal.net/kitty/protocol-extensions.html)
 pub mod kitty {
     use ansi;
+    use errors::*;
     use failure::ResultExt;
     use std::fmt::Write;
-    use terminfo;
-    use ErrorKind;
-    use Result;
 
     pub enum Underline {
         None,

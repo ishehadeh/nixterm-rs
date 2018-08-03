@@ -1,10 +1,9 @@
 mod errors;
 mod fields;
 pub mod lang;
+mod strtab;
 mod terminfo;
 mod terminfobuf;
-
-mod util;
 
 pub use self::errors::*;
 pub use self::fields::*;

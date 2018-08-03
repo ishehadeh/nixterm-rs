@@ -1,9 +1,9 @@
+use failure::ResultExt;
 use std::collections::VecDeque;
 use std::io;
 use terminfo::errors::*;
 use terminfo::lang::parser::{Op, Parser};
 use terminfo::lang::Argument;
-
 pub struct Executor<'a> {
     src: &'a [u8],
     env: ExecutionEnvironment,
@@ -53,7 +53,7 @@ impl<'a> Executor<'a> {
         Ok(w)
     }
 
-    pub fn write<W: io::Write>(&mut self, w: &mut W) -> Result<()> {
+    pub fn write<W: io::Write>(&mut self, w: &mut W) -> Result<usize> {
         self.env.write(&mut Parser::new(self.src), w)
     }
 }
@@ -72,7 +72,7 @@ impl ExecutionEnvironment {
                 Err(ErrorKind::UnexpectedArgumentType("string", "integer").into())
             }
             Some(Argument::String(s)) => Ok(s),
-            Some(Argument::Char(c)) => {
+            Some(Argument::Char(_)) => {
                 Err(ErrorKind::UnexpectedArgumentType("string", "char").into())
             }
             None => Err(ErrorKind::UnexpectedArgumentType("string", "null").into()),
@@ -137,7 +137,12 @@ impl ExecutionEnvironment {
         }
     }
 
-    pub fn write<'a, W: io::Write>(&mut self, parser: &'a mut Parser<'a>, w: &mut W) -> Result<()> {
+    pub fn write<'a, W: io::Write>(
+        &mut self,
+        parser: &'a mut Parser<'a>,
+        w: &mut W,
+    ) -> Result<usize> {
+        let mut written = 0;
         'exe: loop {
             let op = match parser.next() {
                 Some(v) => v?,
@@ -146,7 +151,8 @@ impl ExecutionEnvironment {
 
             match op {
                 Op::NoOp => (),
-                Op::Push(arg) => {
+                Op::Push(arg) => self.push(arg),
+                Op::PushUserArg(arg) => {
                     let val = self.arguments[arg].clone().unwrap_or(Argument::Integer(0));
                     self.push(val)
                 }
@@ -184,8 +190,8 @@ impl ExecutionEnvironment {
                 Op::BitOr => self.map_integer2(|x, y| x | y)?,
                 Op::BitXor => self.map_integer2(|x, y| x ^ y)?,
                 Op::Equal => self.map_integer2(|x, y| x == y)?,
-                Op::Greater => self.map_integer2(|x, y| x > y)?,
-                Op::Less => self.map_integer2(|x, y| x < y)?,
+                Op::Greater => self.map_integer2(|x, y| y > x)?,
+                Op::Less => self.map_integer2(|x, y| y < x)?,
                 Op::Invert => self.map_integer(|x| !x)?,
                 Op::Not => self.map_integer(|x| if x != 0 { x == 0 } else { x == 1 })?,
                 Op::IncrementArgs => {
@@ -203,14 +209,14 @@ impl ExecutionEnvironment {
                     self.push(x);
                 }
                 Op::Print(p) => {
-                    p.print(w, self.pop())?;
+                    written += p.print(w, self.pop())?;
                 }
                 Op::PrintSlice(slice) => {
-                    w.write(slice);
+                    written += w.write(slice).context(ErrorKind::FailedToWriteArgument)?;
                 }
             }
         }
 
-        Ok(())
+        Ok(written)
     }
 }

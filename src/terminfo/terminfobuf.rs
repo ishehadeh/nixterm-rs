@@ -1,17 +1,17 @@
 use terminfo::errors::*;
 use terminfo::fields::*;
-use terminfo::lang;
-use terminfo::util;
-use terminfo::TermInfo;
+use terminfo::strtab::StringTable;
+use terminfo::{lang, TermInfo};
+use util::invalid;
 
 /// The owning, mutable version of `TermInfo`
 #[derive(Debug, Clone)]
 pub struct TermInfoBuf {
     pub names: Vec<String>,
     bools: Vec<bool>,
-    numbers: Vec<u16>,
+    numbers: Vec<u32>,
     strings: Vec<u16>,
-    strtab: util::StringTable,
+    strtab: StringTable,
 
     ext: Option<TermInfoExtBuf>,
 }
@@ -19,18 +19,18 @@ pub struct TermInfoBuf {
 #[derive(Debug, Clone)]
 struct TermInfoExtBuf {
     bools: Vec<bool>,
-    numbers: Vec<u16>,
+    numbers: Vec<u32>,
     strings: Vec<u16>,
     names: Vec<u16>,
-    strtab: util::StringTable,
-    nametab: util::StringTable,
+    strtab: StringTable,
+    nametab: StringTable,
 }
 
 impl TermInfoExtBuf {
     fn new() -> TermInfoExtBuf {
         TermInfoExtBuf {
-            strtab: util::StringTable::new(),
-            nametab: util::StringTable::new(),
+            strtab: StringTable::new(),
+            nametab: StringTable::new(),
             names: Vec::new(),
             bools: Vec::new(),
             numbers: Vec::new(),
@@ -71,7 +71,7 @@ impl TermInfoBuf {
             bools: Vec::with_capacity(PREDEFINED_BOOLEANS_COUNT),
             numbers: Vec::with_capacity(PREDEFINED_BOOLEANS_COUNT),
             strings: Vec::with_capacity(PREDEFINED_STRINGS_COUNT),
-            strtab: util::StringTable::new(),
+            strtab: StringTable::new(),
             ext: None,
         }
     }
@@ -88,14 +88,14 @@ impl TermInfoBuf {
             .unwrap_or(false)
     }
 
-    pub fn number(&self, field: NumericField) -> Option<u16> {
+    pub fn number(&self, field: NumericField) -> Option<u32> {
         let x = self.numbers
             .iter()
             .nth(field as usize)
             .map(|x| *x)
-            .unwrap_or(util::invalid());
+            .unwrap_or(invalid());
 
-        if x == util::invalid() {
+        if x == invalid() {
             None
         } else {
             Some(x)
@@ -108,7 +108,7 @@ impl TermInfoBuf {
                 .iter()
                 .nth(field as usize)
                 .map(|&x| x as usize)
-                .unwrap_or(util::invalid()),
+                .unwrap_or(invalid()),
         ) {
             Some(s)
         } else {
@@ -123,7 +123,7 @@ impl TermInfoBuf {
                 .iter()
                 .nth(field as usize)
                 .map(|&x| x as usize)
-                .unwrap_or(util::invalid()),
+                .unwrap_or(invalid()),
         ) {
             Some(lang::Executor::new(s))
         } else {
@@ -157,7 +157,7 @@ impl TermInfoBuf {
         false
     }
 
-    pub fn ext_number<T: AsRef<str>>(&self, field: T) -> Option<u16> {
+    pub fn ext_number<T: AsRef<str>>(&self, field: T) -> Option<u32> {
         if let Some(ref ext) = self.ext {
             if let Some(idx) = self.ext_index(field) {
                 let idx_offset = ext.bools.len();
@@ -197,10 +197,10 @@ impl TermInfoBuf {
     }
 
     #[inline]
-    pub fn set_number(&mut self, field: NumericField, v: u16) -> Result<()> {
+    pub fn set_number(&mut self, field: NumericField, v: u32) -> Result<()> {
         let i = field as usize;
         while self.numbers.len() <= i {
-            self.numbers.push(util::invalid())
+            self.numbers.push(invalid())
         }
         self.numbers[i] = v;
 
@@ -210,11 +210,11 @@ impl TermInfoBuf {
     pub fn set_string<T: AsRef<str>>(&mut self, field: StringField, v: T) -> Result<()> {
         let i = field as usize;
         while self.strings.len() <= i {
-            self.strings.push(util::invalid())
+            self.strings.push(invalid())
         }
 
         let offset = self.strtab.add(v);
-        if offset >= util::invalid::<usize>() - 1 {
+        if offset >= invalid::<usize>() - 1 {
             return Err(ErrorKind::MaxStrTabSizeReached.into());
         }
 
@@ -235,7 +235,7 @@ impl TermInfoBuf {
                 ext.bools[x] = v;
             } else {
                 let offset = ext.nametab.add(field);
-                if offset >= util::invalid::<usize>() - 1 {
+                if offset >= invalid::<usize>() - 1 {
                     return Err(ErrorKind::MaxStrTabSizeReached.into());
                 }
 
@@ -249,7 +249,7 @@ impl TermInfoBuf {
         ext.bools.push(v);
 
         let offset = ext.nametab.add(field);
-        if offset >= util::invalid::<usize>() - 1 {
+        if offset >= invalid::<usize>() - 1 {
             return Err(ErrorKind::MaxStrTabSizeReached.into());
         }
 
@@ -259,7 +259,7 @@ impl TermInfoBuf {
         Ok(())
     }
 
-    pub fn set_ext_number(&mut self, field: String, v: u16) -> Result<()> {
+    pub fn set_ext_number(&mut self, field: String, v: u32) -> Result<()> {
         let idx = self.ext_index(&field);
         if let Some(ref mut ext) = self.ext {
             if ext.bools.len() > u16::max_value() as usize && idx.is_none() {
@@ -273,7 +273,7 @@ impl TermInfoBuf {
                 }
             } else {
                 let offset = ext.nametab.add(field);
-                if offset >= util::invalid::<usize>() - 1 {
+                if offset >= invalid::<usize>() - 1 {
                     return Err(ErrorKind::MaxStrTabSizeReached.into());
                 }
 
@@ -286,7 +286,7 @@ impl TermInfoBuf {
         ext.numbers.push(v);
 
         let offset = ext.nametab.add(field);
-        if offset >= util::invalid::<usize>() - 1 {
+        if offset >= invalid::<usize>() - 1 {
             return Err(ErrorKind::MaxStrTabSizeReached.into());
         }
 
@@ -305,7 +305,7 @@ impl TermInfoBuf {
             }
 
             let strtab_ref = ext.strtab.add(v) as u16;
-            if strtab_ref >= util::invalid::<u16>() - 1 {
+            if strtab_ref >= invalid::<u16>() - 1 {
                 return Err(ErrorKind::MaxStrTabSizeReached.into());
             }
 
@@ -316,7 +316,7 @@ impl TermInfoBuf {
                 }
             } else {
                 let offset = ext.nametab.add(field);
-                if offset >= util::invalid::<usize>() - 1 {
+                if offset >= invalid::<usize>() - 1 {
                     return Err(ErrorKind::MaxStrTabSizeReached.into());
                 }
 
@@ -328,13 +328,13 @@ impl TermInfoBuf {
 
         let mut ext = TermInfoExtBuf::new();
         let strtab_ref = ext.strtab.add(v) as u16;
-        if strtab_ref >= util::invalid::<u16>() - 1 {
+        if strtab_ref >= invalid::<u16>() - 1 {
             return Err(ErrorKind::MaxStrTabSizeReached.into());
         }
 
         ext.strings.push(strtab_ref as u16);
         let offset = ext.nametab.add(field);
-        if offset >= util::invalid::<usize>() - 1 {
+        if offset >= invalid::<usize>() - 1 {
             return Err(ErrorKind::MaxStrTabSizeReached.into());
         }
 

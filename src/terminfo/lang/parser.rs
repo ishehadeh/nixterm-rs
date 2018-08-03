@@ -1,25 +1,23 @@
 use failure::ResultExt;
 use std::collections::VecDeque;
-use std::result;
-use std::sync::mpsc;
+use std::str;
+use std::str::FromStr;
 use terminfo::errors::*;
 use terminfo::lang::printf::PrintfArgs;
 use terminfo::lang::Argument;
 
 pub struct Parser<'a> {
-    src: &'a [u8],
     slice: &'a [u8],
     buffer: VecDeque<Op<'a>>,
 }
 
-pub struct Span<'a> {
-    slice: &'a [u8],
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Op<'a> {
-    /// Push an argument onto the stack
-    Push(usize),
+    /// Push a user supplied argument onto the stack
+    PushUserArg(usize),
+
+    /// Push a static argument onto the stack
+    Push(Argument),
 
     NoOp,
     Add,
@@ -61,7 +59,6 @@ pub enum Op<'a> {
 impl<'a> Parser<'a> {
     pub fn new(src: &'a [u8]) -> Parser<'a> {
         Parser {
-            src: src,
             slice: src,
             buffer: VecDeque::with_capacity(4),
         }
@@ -132,11 +129,42 @@ impl<'a> Parser<'a> {
             b'%' => self.add_instruction(Op::PrintSlice(b"%")),
             b'p' => {
                 match self.slice.iter().skip(2).next() {
-                    Some(i @ b'1'..=b'9') => self.add_instruction(Op::Push((i - b'1') as usize)),
+                    Some(i @ b'1'..=b'9') => {
+                        self.add_instruction(Op::PushUserArg((i - b'1') as usize))
+                    }
                     _ => return Err(ErrorKind::InvalidArgumentIdentifier.into()),
                 };
                 read += 1;
             }
+            b'{' => {
+                let numlen = self.slice
+                    .iter()
+                    .skip(2)
+                    .take_while(|&&c| c != b'}')
+                    .count() + 2;
+                self.add_instruction(Op::Push(
+                    isize::from_str_radix(
+                        str::from_utf8(&self.slice[2..numlen]).context(ErrorKind::InvalidNumber)?,
+                        10,
+                    ).context(ErrorKind::InvalidNumber)?
+                        .into(),
+                ));
+                read += numlen - 1;
+            }
+            b'\'' => {
+                let charlen = self.slice
+                    .iter()
+                    .skip(2)
+                    .take_while(|&&c| c != b'\'')
+                    .count() + 2;
+                self.add_instruction(Op::Push(
+                    char::from_str(str::from_utf8(&self.slice[2..charlen]).context(ErrorKind::InvalidChar)?)
+                        .context(ErrorKind::InvalidChar)?
+                        .into(),
+                ));
+                read += charlen - 1;
+            }
+
             b'i' => self.add_instruction(Op::IncrementArgs),
             b'l' => self.add_instruction(Op::StrLen),
             b'+' => self.add_instruction(Op::Add),
@@ -156,32 +184,37 @@ impl<'a> Parser<'a> {
                 // add a placeholder for branch instruction, we will update it later
                 self.slice = &self.slice[read..];
                 self.parse_until(&[b't'])?;
-                self.slice = &self.slice[2..];
+                let mut end_jumps = Vec::new();
 
-                let branch_idx = self.buffer.len();
-                self.add_instruction(Op::NoOp);
-
-                self.parse_until(&[b'e', b';'])?;
-
-                if self.slice.len() < 2 {
-                    // missing end of if-statement
-                    return Err(ErrorKind::UnexpectedEof.into());
-                }
-
-                if self.slice[1] == b'e' {
-                    // add a placeholder jump instruction, we will update it later
-                    let jump_idx = self.buffer.len();
-                    self.add_instruction(Op::NoOp);
-                    self.buffer[branch_idx] = Op::BranchFalse(self.buffer.len() - 1 - branch_idx);
-
+                while self.slice.len() > 1 && self.slice[1] == b't' {
                     self.slice = &self.slice[2..];
-                    self.parse_until(&[b';'])?;
 
-                    // when the IP reaches the end of the previous section jump over the else section.
-                    self.buffer[jump_idx] = Op::Jump(self.buffer.len() - jump_idx);
-                } else {
-                    // if the condition fails jump to the after the %;
-                    self.buffer[branch_idx] = Op::BranchFalse(self.buffer.len() - 1 - branch_idx);
+                    let branch_idx = self.buffer.len();
+                    self.add_instruction(Op::NoOp);
+                    self.parse_until(&[b'e', b';'])?;
+
+                    if self.slice.len() < 2 {
+                        // missing end of if-statement
+                        return Err(ErrorKind::UnexpectedEof.into());
+                    }
+
+                    if self.slice[1] == b'e' {
+                        // add a placeholder jump instruction, we will update it later
+                        end_jumps.push(self.buffer.len());
+                        self.add_instruction(Op::NoOp);
+                        self.buffer[branch_idx] =
+                            Op::BranchFalse(self.buffer.len() - 1 - branch_idx);
+
+                        self.slice = &self.slice[2..];
+                        self.parse_until(&[b';', b't'])?;
+                    } else {
+                        // if the condition fails jump to the after the %;
+                        self.buffer[branch_idx] =
+                            Op::BranchFalse(self.buffer.len() - 1 - branch_idx);
+                    }
+                }
+                for j in end_jumps {
+                    self.buffer[j] = Op::Jump(self.buffer.len() - j - 1);
                 }
                 read = 2;
             }

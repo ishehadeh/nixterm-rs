@@ -2,6 +2,7 @@ use errors::*;
 use failure::ResultExt;
 use std::io::Write;
 use std::str::{Chars, FromStr};
+use util;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Color {
@@ -31,6 +32,7 @@ pub enum ControlSequence {
     CursorRestoreState = 117,
 }
 
+#[repr(u8)]
 pub enum GraphicRendition {
     Reset = 0,
     Bold = 1,
@@ -245,6 +247,10 @@ pub fn cursor_set_column<W: Write>(w: &mut W, x: usize) -> Result<()> {
     Ok(write!(w, "\x1b[{}G", x).context(ErrorKind::CsiFailed)?)
 }
 
-pub fn sgr<W: Write>(w: &mut W, gr: GraphicRendition) -> Result<()> {
-    Ok(write!(w, "\x1b[{}m", gr as usize).context(ErrorKind::CsiFailed)?)
+#[inline]
+pub fn sgr<W: Write>(w: &mut W, gr: GraphicRendition) -> Result<usize> {
+    Ok(
+        w.write(b"\x1b[").context(ErrorKind::CsiFailed)? + util::write_u8_ansi(w, gr as u8)?
+            + w.write(b"m").context(ErrorKind::CsiFailed)?,
+    )
 }

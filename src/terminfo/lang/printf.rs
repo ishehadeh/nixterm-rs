@@ -41,28 +41,31 @@ impl PrintfArgs {
         Ok(spec)
     }
 
-    fn pad<W: io::Write>(&self, w: &mut W, buf: &[u8]) -> Result<()> {
+    fn pad<W: io::Write>(&self, w: &mut W, buf: &[u8]) -> Result<usize> {
+        let mut written = 0;
         if let Some(width) = self.width {
             if buf.len() < width && !self.left_align {
                 for _ in buf.len()..width {
                     w.write(&[b' ']).context(ErrorKind::FailedToWriteArgument)?;
                 }
+                written += width - buf.len()
             }
         }
 
-        w.write(buf).context(ErrorKind::FailedToWriteArgument)?;
+        written += w.write(buf).context(ErrorKind::FailedToWriteArgument)?;
 
         if let Some(width) = self.width {
             if buf.len() < width && self.left_align {
                 for _ in buf.len()..width {
                     w.write(&[b' ']).context(ErrorKind::FailedToWriteArgument)?;
                 }
+                written += width - buf.len()
             }
         }
 
-        Ok(())
+        Ok(written)
     }
-    pub fn write_number<W: io::Write>(&self, w: &mut W, num: i64) -> Result<()> {
+    pub fn write_number<W: io::Write>(&self, w: &mut W, num: i64) -> Result<usize> {
         let (radix, uppercase) = match self.character {
             'x' => (16, false),
             'X' => (16, true),
@@ -129,7 +132,7 @@ impl PrintfArgs {
         self.pad(w, &num_buf[..num_buf_len])
     }
 
-    pub fn write_string<W: io::Write>(&self, w: &mut W, s: &str) -> Result<()> {
+    pub fn write_string<W: io::Write>(&self, w: &mut W, s: &str) -> Result<usize> {
         match self.character {
             'x' | 'X' | 'o' | 'd' => {
                 return Err(ErrorKind::UnexpectedArgumentType("integer", "string").into())
@@ -149,29 +152,29 @@ impl PrintfArgs {
         self.pad(w, s[..slen].as_bytes())
     }
 
-    pub fn write_char<W: io::Write>(&self, w: &mut W, c: u8) -> Result<()> {
+    pub fn write_char<W: io::Write>(&self, w: &mut W, c: u8) -> Result<usize> {
         match self.character {
             'x' | 'X' | 'o' | 'd' => {
                 return Err(ErrorKind::UnexpectedArgumentType("integer", "char").into())
             }
-            's' => return Err(ErrorKind::UnexpectedArgumentType("integer", "string").into()),
+            's' => return Err(ErrorKind::UnexpectedArgumentType("integer", "char").into()),
             _ => (),
         };
 
         self.pad(w, &[c])
     }
 
-    pub fn print<T: Into<Argument>, W: io::Write>(&self, w: &mut W, arg: Option<T>) -> Result<()> {
-        match arg.map(|x| x.into()) {
+    pub fn print<T: Into<Argument>, W: io::Write>(
+        &self,
+        w: &mut W,
+        arg: Option<T>,
+    ) -> Result<usize> {
+        Ok(match arg.map(|x| x.into()) {
             Some(Argument::Integer(x)) => self.write_number(w, x)?,
             Some(Argument::String(s)) => self.write_string(w, &s)?,
             Some(Argument::Char(c)) => self.write_char(w, c)?,
-            None => {
-                w.write(NULL).context(ErrorKind::FailedToWriteArgument)?;
-            }
-        };
-
-        Ok(())
+            None => w.write(NULL).context(ErrorKind::FailedToWriteArgument)?,
+        })
     }
 
     fn parse_specifier(&mut self, src: &[u8]) -> Result<()> {

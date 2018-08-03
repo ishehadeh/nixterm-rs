@@ -16,3 +16,11 @@ failure_derive = "0.1.1"
 [[example]]
 name = "terminfo"
 path = "./examples/terminfo.rs"
+
+[[example]]
+name = "term"
+path = "./examples/term.rs"
+
+[[example]]
+name = "raw"
+path = "./examples/raw.rs"

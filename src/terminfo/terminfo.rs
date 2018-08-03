@@ -1,8 +1,8 @@
 use std::mem;
 use terminfo::errors::*;
 use terminfo::fields::*;
-use terminfo::util;
-use terminfo::util::read_le_u16;
+use terminfo::strtab::{StrTable, StringTable};
+use util::{invalid, read_le_u16, read_le_u32};
 
 /// TermInfo is immutable terminfo data.
 ///
@@ -12,12 +12,14 @@ use terminfo::util::read_le_u16;
 /// since the buffer it parsed has to live along side it.
 #[derive(Debug, Clone)]
 pub struct TermInfo<'a> {
+    /// True if this file supports 32-bit numbers
+    long: bool,
     names: &'a [u8],
 
     bools: &'a [u8],
     numbers: &'a [u8],
     strings: &'a [u8],
-    strtab: util::StrTable<'a>,
+    strtab: StrTable<'a>,
 
     ext: Option<TermInfoExt<'a>>,
 }
@@ -27,12 +29,13 @@ pub struct TermInfo<'a> {
 /// is exposed to users through the `TermInfo` struct.
 #[derive(Debug, Clone)]
 pub(crate) struct TermInfoExt<'a> {
+    long: bool,
     bools: &'a [u8],
     numbers: &'a [u8],
     strings: &'a [u8],
     names: &'a [u8],
 
-    strtab: util::StrTable<'a>,
+    strtab: StrTable<'a>,
     nametab_start: usize,
 }
 
@@ -48,9 +51,13 @@ fn split_terminfo<'a>(bytes: &'a [u8]) -> Result<TermInfo<'a>> {
         return Err(ErrorKind::IncompleteTermInfoHeader.into());
     }
 
-    if read_le_u16(bytes, 0) != 0o432 {
-        return Err(ErrorKind::InvalidMagicNumber.into());
-    }
+    let num_bytes = match read_le_u16(bytes, 0) {
+        0o542 | 542 => 4,
+        0o432 => 2,
+        _ => {
+            return Err(ErrorKind::InvalidMagicNumber.into());
+        }
+    };
 
     // following the magic there is a series of lengths for each section
     let names_size = read_le_u16(bytes, 1) as usize;
@@ -60,7 +67,7 @@ fn split_terminfo<'a>(bytes: &'a [u8]) -> Result<TermInfo<'a>> {
     let strtab_size = read_le_u16(bytes, 5) as usize;
 
     let mut expected_filesize =
-        12 + bools_count + numbers_count * 2 + strings_count * 2 + strtab_size + names_size;
+        12 + bools_count + numbers_count * num_bytes + strings_count * 2 + strtab_size + names_size;
     if bools_count + names_size % 2 != 0 {
         expected_filesize += 1;
     }
@@ -86,36 +93,39 @@ fn split_terminfo<'a>(bytes: &'a [u8]) -> Result<TermInfo<'a>> {
         &slice[bools_count..]
     };
 
-    let numbers = &slice[..numbers_count * 2];
-    slice = &slice[numbers_count * 2..];
+    let numbers = &slice[..numbers_count * num_bytes];
+    slice = &slice[numbers_count * num_bytes..];
 
     let strings = &slice[..strings_count * 2];
     slice = &slice[strings_count * 2..];
 
     let strtab = &slice[..strtab_size];
-    slice = if strtab_size % 2 != 0 {
-        &slice[strtab_size + 1..]
-    } else {
-        &slice[strtab_size..]
-    };
 
     let ext = if expected_filesize < file_size {
-        Some(split_terminfo_ext(slice)?)
+        Some(split_terminfo_ext(
+            if strtab_size % 2 != 0 {
+                &slice[strtab_size + 1..]
+            } else {
+                &slice[strtab_size..]
+            },
+            num_bytes,
+        )?)
     } else {
         None
     };
 
     Ok(TermInfo {
+        long: num_bytes > 2,
         names: names,
         bools: bools,
         numbers: numbers,
         strings: strings,
-        strtab: util::StrTable::new(strtab),
+        strtab: StrTable::new(strtab),
         ext: ext,
     })
 }
 
-fn split_terminfo_ext<'a>(bytes: &'a [u8]) -> Result<TermInfoExt<'a>> {
+fn split_terminfo_ext<'a>(bytes: &'a [u8], num_bytes: usize) -> Result<TermInfoExt<'a>> {
     let file_size = bytes.len();
 
     if file_size < 10 {
@@ -130,8 +140,8 @@ fn split_terminfo_ext<'a>(bytes: &'a [u8]) -> Result<TermInfoExt<'a>> {
 
     let names_count = strings_count + numbers_count + bools_count;
 
-    let mut expected_filesize =
-        10 + bools_count + numbers_count * 2 + strings_count * 2 + names_count * 2 + strtab_size;
+    let mut expected_filesize = 10 + bools_count + numbers_count * num_bytes + strings_count * 2
+        + names_count * 2 + strtab_size;
     if bools_count % 2 != 0 {
         expected_filesize += 1;
     }
@@ -150,8 +160,8 @@ fn split_terminfo_ext<'a>(bytes: &'a [u8]) -> Result<TermInfoExt<'a>> {
         &slice[bools_count..]
     };
 
-    let numbers = &slice[..numbers_count * 2];
-    slice = &slice[numbers_count * 2..];
+    let numbers = &slice[..numbers_count * num_bytes];
+    slice = &slice[numbers_count * num_bytes..];
 
     let strings = &slice[..strings_count * 2];
     slice = &slice[strings_count * 2..];
@@ -177,22 +187,30 @@ fn split_terminfo_ext<'a>(bytes: &'a [u8]) -> Result<TermInfoExt<'a>> {
             .count();
 
     Ok(TermInfoExt {
+        long: num_bytes > 2,
         bools: bools,
         numbers: numbers,
         strings: strings,
-        strtab: util::StrTable::new(strtab),
+        strtab: StrTable::new(strtab),
         nametab_start: nametab_offset,
         names: names,
     })
 }
 
 impl<'a> TermInfoExt<'a> {
-    pub(crate) fn get_tables(&self) -> (util::StringTable, util::StringTable) {
+    pub(crate) fn get_tables(&self) -> (StringTable, StringTable) {
         self.strtab.split(self.nametab_start)
     }
 
-    pub(crate) fn get_numbers(&self) -> Vec<u16> {
-        self.numbers.chunks(2).map(|n| read_le_u16(n, 0)).collect()
+    pub(crate) fn get_numbers(&self) -> Vec<u32> {
+        if self.long {
+            self.numbers.chunks(4).map(|n| read_le_u32(n, 0)).collect()
+        } else {
+            self.numbers
+                .chunks(2)
+                .map(|n| read_le_u16(n, 0) as u32)
+                .collect()
+        }
     }
 
     pub(crate) fn get_string_offsets(&self) -> Vec<u16> {
@@ -246,12 +264,19 @@ impl<'a> TermInfo<'a> {
             .map(|slice| unsafe { mem::transmute::<&[u8], &str>(slice) })
     }
 
-    pub(crate) fn get_strtab(&self) -> util::StringTable {
+    pub(crate) fn get_strtab(&self) -> StringTable {
         self.strtab.to_string_table()
     }
 
-    pub(crate) fn get_numbers(&self) -> Vec<u16> {
-        self.numbers.chunks(2).map(|n| read_le_u16(n, 0)).collect()
+    pub(crate) fn get_numbers(&self) -> Vec<u32> {
+        if self.long {
+            self.numbers.chunks(4).map(|n| read_le_u32(n, 0)).collect()
+        } else {
+            self.numbers
+                .chunks(2)
+                .map(|n| read_le_u16(n, 0) as u32)
+                .collect()
+        }
     }
 
     pub(crate) fn get_string_offsets(&self) -> Vec<u16> {
@@ -285,12 +310,17 @@ impl<'a> TermInfo<'a> {
     /// Get a numeric field.
     ///
     /// Not all terminals will include a value for every field enumerated in `NumericField`.
-    pub fn number(&self, field: NumericField) -> Option<u16> {
+    pub fn number(&self, field: NumericField) -> Option<u32> {
         let i = field as usize;
 
         if i * 2 < self.numbers.len() {
-            let number = read_le_u16(self.numbers, i);
-            if number != util::invalid() {
+            let number = if self.long {
+                read_le_u32(self.numbers, i)
+            } else {
+                read_le_u16(self.numbers, i) as u32
+            };
+
+            if number != invalid() {
                 Some(number)
             } else {
                 None
@@ -321,7 +351,7 @@ impl<'a> TermInfo<'a> {
 
         if i * 2 < self.strings.len() {
             let offset = read_le_u16(self.strings, i);
-            if offset != util::invalid() {
+            if offset != invalid() {
                 return Some(self.strtab.get(offset as usize).unwrap());
             }
         }
@@ -349,14 +379,19 @@ impl<'a> TermInfo<'a> {
     }
 
     /// This method is identified to `Terminfo::number`, except the number is identified by a string.
-    pub fn ext_number<T: AsRef<str>>(&self, field: T) -> Option<u16> {
+    pub fn ext_number<T: AsRef<str>>(&self, field: T) -> Option<u32> {
         if let Some(ref ext) = self.ext {
             if let Some(idx) = self.ext_index(field) {
                 let idx_offset = ext.bools.len();
                 if idx >= idx_offset && idx - idx_offset < ext.numbers.len() {
-                    let num = read_le_u16(ext.numbers, idx - idx_offset);
-                    if num != util::invalid() {
-                        return Some(num);
+                    let number = if self.long {
+                        read_le_u32(self.numbers, idx)
+                    } else {
+                        read_le_u16(self.numbers, idx) as u32
+                    };
+
+                    if number != invalid() {
+                        return Some(number);
                     }
                 }
             }
@@ -371,7 +406,7 @@ impl<'a> TermInfo<'a> {
                 let idx_offset = ext.bools.len() + (ext.numbers.len() / 2);
                 if idx >= idx_offset && idx - idx_offset < (ext.strings.len() / 2) {
                     let num = read_le_u16(ext.strings, idx - idx_offset);
-                    if num != util::invalid() {
+                    if num != invalid() {
                         return ext.strtab
                             .get(num as usize)
                             .map(|x| Some(x))
@@ -482,7 +517,7 @@ mod test {
         let l16c = TermInfo::parse(LINUX_16COLOR_INFO).unwrap();
 
         assert_eq!(l16c.has_ext(), true);
-        assert_eq!(l16c.ext_number("U8"), Some(1));
+        assert_eq!(l16c.ext_number("U8"), None);
     }
 
 }

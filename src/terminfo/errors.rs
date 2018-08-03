@@ -81,6 +81,12 @@ pub enum ErrorKind {
 
     #[fail(display = "unexpected EOF")]
     UnexpectedEof,
+
+    #[fail(display = "invalid numeric literal")]
+    InvalidNumber,
+
+    #[fail(display = "invalid character literal")]
+    InvalidChar,
 }
 
 impl Error {

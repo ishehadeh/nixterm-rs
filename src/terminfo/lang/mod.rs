@@ -95,6 +95,12 @@ mod tests {
         assert_eq!(&buffer, b"32");
         buffer.clear();
 
+        Executor::new(b"%{8}%{22}%+%d%'c'%c")
+            .write(&mut buffer)
+            .unwrap();
+        assert_eq!(&buffer, b"30c");
+        buffer.clear();
+
         Executor::new(b"%p1%p2%+/%d%p1%.1d")
             .arg(40)
             .arg(20)
@@ -142,12 +148,13 @@ mod tests {
             .arg(1)
             .write(&mut buffer) 
             .unwrap();
-        assert_eq!(
-            buffer.iter().map(|&c| c as char).collect::<String>(),
-            b"\\E(B\\E[0;7m"
-                .iter()
-                .map(|&c| c as char)
-                .collect::<String>()
-        );
+        assert_eq!(buffer, b"\\E(B\\E[0;7m");
+        buffer.clear();
+
+        Executor::new(b"\x1b[%?%p1%{8}%<%t3%p1%d%e%p1%{16}%<%t9%p1%{8}%-%d%e38;5;%p1%d%;m")
+            .arg(3)
+            .write(&mut buffer)
+            .unwrap();
+        assert_eq!(&String::from_utf8(buffer).unwrap(), "\x1b[33m");
     }
 }
