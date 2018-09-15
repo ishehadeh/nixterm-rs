@@ -1,6 +1,6 @@
 [package]
 name = "nixterm"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 description = "A terminal library for rust "
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
