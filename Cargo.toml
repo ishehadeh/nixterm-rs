@@ -1,11 +1,11 @@
 [package]
 name = "nixterm"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
-description = "A terminal library for rust "
+description = "A terminal library for rust"
 authors = ["Ian Shehadeh <IanShehadeh2020@gmail.com>"]
-homepage = "https://github.com/IanS5/tty-rs"
-repository = "https://github.com/IanS5/tty-rs"
+homepage = "https://github.com/IanS5/nixterm-rs"
+repository = "https://github.com/IanS5/nixterm-rs"
 
 
 [dependencies]
