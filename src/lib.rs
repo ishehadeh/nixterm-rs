@@ -1,5 +1,6 @@
 #[macro_use]
 extern crate failure;
+extern crate memchr;
 extern crate nix;
 
 #[macro_use]

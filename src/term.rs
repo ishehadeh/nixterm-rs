@@ -113,23 +113,29 @@ impl Settings {
     ///
     /// This method is roughly equivalent to the termios C API's `cfmakeraw()` function. It configures the terminal
     /// to stop responding to signals, perform no post, or input processing, and turns off echoing and canonical mode.
-    pub fn raw(self) -> Self {
-        self.ignore_break(false)
-            .interrupt_on_break(false)
-            .mark_bad_input(false)
-            .strip_bit8(false)
-            .make_input_newline_carriage_return(false)
-            .make_input_carriage_return_newline(false)
-            .xon_xoff(false)
-            .ignore_input_carriage_return(false)
-            .post_processing(false)
-            .echo(false)
-            .echo_newline(false)
-            .canonical(false)
-            .signals(false)
-            .input_processing(false)
-            .parity(false)
-            .char_size(8)
+    pub fn raw(mut self) -> Self {
+        use nix::sys::termios::ControlFlags;
+        use nix::sys::termios::InputFlags;
+        use nix::sys::termios::LocalFlags;
+        use nix::sys::termios::OutputFlags;
+
+        self.termios.input_flags &= !(InputFlags::IGNBRK
+            | InputFlags::BRKINT
+            | InputFlags::PARMRK
+            | InputFlags::ISTRIP
+            | InputFlags::INLCR
+            | InputFlags::IGNCR
+            | InputFlags::ICRNL
+            | InputFlags::IXON);
+        self.termios.output_flags &= !OutputFlags::OPOST;
+        self.termios.local_flags &= !(LocalFlags::ECHO
+            | LocalFlags::ECHONL
+            | LocalFlags::ICANON
+            | LocalFlags::ISIG
+            | LocalFlags::IEXTEN);
+        self.termios.control_flags &= !(ControlFlags::CSIZE | ControlFlags::PARENB);
+        self.termios.control_flags |= ControlFlags::CS8;
+        return self;
     }
 
     /// Set the character size, `x` must be in the range 5-8 otherwise this method will panic
@@ -140,6 +146,7 @@ impl Settings {
         self.termios
             .control_flags
             .remove(termios::ControlFlags::CSIZE);
+
         self.termios.control_flags.insert(match x {
             5 => termios::ControlFlags::CS5,
             6 => termios::ControlFlags::CS6,
@@ -657,6 +664,38 @@ where
         }
 
         Ok(())
+    }
+
+    pub fn shift_cursor(mut self, x: isize, y: isize) -> Self {
+        if self.err.is_some() {
+            return self;
+        }
+
+        if (x > 0) {
+            self.exec(terminfo::ParmRightCursor)
+                .map(|ctx| ctx.arg(x).write(&mut self))
+                .map_err(|e| self.err = Some(e));
+        } else if (x < 0) {
+            self.exec(terminfo::ParmLeftCursor)
+                .map(|ctx| ctx.arg(-x).write(&mut self))
+                .map_err(|e| self.err = Some(e));
+        }
+
+        if self.err.is_some() {
+            return self;
+        }
+
+        if (y > 0) {
+            self.exec(terminfo::ParmUpCursor)
+                .map(|ctx| ctx.arg(y).write(&mut self))
+                .map_err(|e| self.err = Some(e));
+        } else if (y < 0) {
+            self.exec(terminfo::ParmDownCursor)
+                .map(|ctx| ctx.arg(-y).write(&mut self))
+                .map_err(|e| self.err = Some(e));
+        }
+
+        return self;
     }
 
     pub fn default_background(mut self) -> Self {

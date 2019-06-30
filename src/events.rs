@@ -195,6 +195,7 @@ where
 
         let mut c: [u8; 1] = [0; 1];
         let read = self.tty.read(&mut c);
+
         if read == 0 {
             None
         } else {
@@ -241,11 +242,10 @@ where
             c = self.getch();
         }
         let ch = c.unwrap();
-
         Ok(match ch {
             0...8 | 10...12 | 14...26 | 28...31 => Key::Control((ch + 64) as char),
             9 => Key::Tab,
-            13 => Key::Enter,
+            10 | 13 => Key::Enter,
             27 => self.getkey_esc()?,
             127 => Key::Delete,
             32...126 => Key::Char(ch as char),

@@ -49,12 +49,12 @@ impl<'a> Executor<'a> {
 
     pub fn vec(&mut self) -> Result<Vec<u8>> {
         let mut w = Vec::new();
-        self.write(&mut w)?;
+        self.env.write(&mut Parser::new(self.src), &mut w);
         Ok(w)
     }
 
     pub fn write<W: io::Write>(&mut self, w: &mut W) -> Result<usize> {
-        self.env.write(&mut Parser::new(self.src), w)
+        Ok(w.write(&self.vec()?).unwrap())
     }
 }
 
